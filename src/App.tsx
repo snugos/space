@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
-import Peer, { DataConnection } from "peerjs";
+import Peer from "peerjs";
+import type { DataConnection } from "peerjs";
 
 interface Player {
   id: string;
@@ -243,25 +244,25 @@ function App() {
 
   const handleMessage = (conn: DataConnection, data: any) => {
     if (data.type === "move") {
-      let player = playersRef.current.get(data.id);
+      const player = playersRef.current.get(data.id);
       if (!player) {
         const color = data.color || "#ff0000";
         const mesh = createPlayerMesh(color);
         sceneRef.current?.add(mesh);
-        player = { ...data, mesh };
-        playersRef.current.set(data.id, player);
+        const newPlayer: Player = { ...data, mesh };
+        playersRef.current.set(data.id, newPlayer);
       } else {
         Object.assign(player, data);
       }
     } else if (data.type === "state") {
       Object.entries(data.players).forEach(([pid, p]: [string, any]) => {
         if (pid !== playerIdRef.current) {
-          let player = playersRef.current.get(pid);
+          const player = playersRef.current.get(pid);
           if (!player) {
             const mesh = createPlayerMesh(p.color || "#ff0000");
             sceneRef.current?.add(mesh);
-            player = { ...p, mesh };
-            playersRef.current.set(pid, player);
+            const newPlayer: Player = { ...p, mesh };
+            playersRef.current.set(pid, newPlayer);
           } else {
             Object.assign(player, p);
           }

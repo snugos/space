@@ -25,6 +25,7 @@ function App() {
   const posRef = useRef({ x: 0, y: 1.7, z: 0, yaw: 0 });
   const keysRef = useRef<Set<string>>(new Set());
   const playerIdRef = useRef<string>("");
+  const yawRef = useRef<number>(0);
 
   // Create world
   const createWorld = useCallback((scene: THREE.Scene) => {
@@ -119,12 +120,13 @@ function App() {
     createWorld(scene);
 
     // Handle resize
-    window.addEventListener("resize", () => {
+    const handleResize = () => {
       if (!cameraRef.current || !rendererRef.current) return;
       cameraRef.current.aspect = window.innerWidth / window.innerHeight;
       cameraRef.current.updateProjectionMatrix();
       rendererRef.current.setSize(window.innerWidth, window.innerHeight);
-    });
+    };
+    window.addEventListener("resize", handleResize);
 
     // Movement
     const onKeyDown = (e: KeyboardEvent) => keysRef.current.add(e.code);
@@ -136,11 +138,10 @@ function App() {
     const canvas = renderer.domElement;
     canvas.addEventListener("click", () => canvas.requestPointerLock());
 
-    let yaw = 0;
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement === canvas) {
-        yaw -= e.movementX * 0.002;
-        posRef.current.yaw = yaw;
+        yawRef.current -= e.movementX * 0.002;
+        posRef.current.yaw = yawRef.current;
       }
     };
     document.addEventListener("mousemove", onMouseMove);
@@ -153,6 +154,7 @@ function App() {
       lastTime = now;
 
       const pos = posRef.current;
+      const yaw = yawRef.current;
       const speed = 5 * delta;
 
       if (keysRef.current.has("KeyW") || keysRef.current.has("ArrowUp")) {
@@ -189,6 +191,7 @@ function App() {
     requestAnimationFrame(animate);
 
     return () => {
+      window.removeEventListener("resize", handleResize);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       document.removeEventListener("mousemove", onMouseMove);
@@ -226,42 +229,49 @@ function App() {
 
     peer.on("connection", (conn) => {
       connectionsRef.current.push(conn);
-      conn.on("data", (data: any) => handleMessage(conn, data));
+      conn.on("data", (data: unknown) => handleMessage(conn, data));
       conn.on("open", () => sendState(conn));
     });
 
     peer.on("error", (err) => console.error("Peer error:", err));
 
     // Broadcast position every 50ms
-    setInterval(() => {
+    const intervalId = setInterval(() => {
       const pos = posRef.current;
       const msg = { type: "move", id: playerIdRef.current, ...pos };
       connectionsRef.current.forEach((c) => {
         if (c.open) c.send(msg);
       });
     }, 50);
+
+    return () => clearInterval(intervalId);
   }, [createPlayerMesh]);
 
-  const handleMessage = (conn: DataConnection, data: any) => {
-    if (data.type === "move") {
-      const player = playersRef.current.get(data.id);
+  const handleMessage = useCallback((conn: DataConnection, data: unknown) => {
+    if (!sceneRef.current || !createPlayerMesh) return;
+    
+    const msg = data as Record<string, unknown>;
+    if (msg.type === "move") {
+      const moveData = msg as { type: string; id: string; x: number; y: number; z: number; yaw: number; color?: string };
+      const player = playersRef.current.get(moveData.id);
       if (!player) {
-        const color = data.color || "#ff0000";
+        const color = moveData.color || "#ff0000";
         const mesh = createPlayerMesh(color);
-        sceneRef.current?.add(mesh);
-        const newPlayer: Player = { ...data, mesh };
-        playersRef.current.set(data.id, newPlayer);
+        sceneRef.current.add(mesh);
+        const newPlayer: Player = { ...moveData, mesh };
+        playersRef.current.set(moveData.id, newPlayer);
       } else {
-        Object.assign(player, data);
+        Object.assign(player, moveData);
       }
-    } else if (data.type === "state") {
-      Object.entries(data.players).forEach(([pid, p]: [string, any]) => {
+    } else if (msg.type === "state") {
+      const stateData = msg as { type: string; players: Record<string, { x: number; y: number; z: number; yaw: number; color?: string }> };
+      Object.entries(stateData.players).forEach(([pid, p]) => {
         if (pid !== playerIdRef.current) {
           const player = playersRef.current.get(pid);
           if (!player) {
             const mesh = createPlayerMesh(p.color || "#ff0000");
-            sceneRef.current?.add(mesh);
-            const newPlayer: Player = { ...p, mesh };
+            sceneRef.current.add(mesh);
+            const newPlayer: Player = { ...p, id: pid, mesh };
             playersRef.current.set(pid, newPlayer);
           } else {
             Object.assign(player, p);
@@ -269,17 +279,18 @@ function App() {
         }
       });
     }
-  };
+  }, [createPlayerMesh]);
 
-  const sendState = (conn: DataConnection) => {
-    const state: any = { type: "state", players: {} };
+  const sendState = useCallback((conn: DataConnection) => {
+    if (!conn.open) return;
+    const state: { type: string; players: Record<string, { x: number; y: number; z: number; yaw: number; color: string }> } = { type: "state", players: {} };
     playersRef.current.forEach((p, id) => {
       if (id !== playerIdRef.current) {
         state.players[id] = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, color: p.color };
       }
     });
-    if (conn.open) conn.send(state);
-  };
+    conn.send(state);
+  }, []);
 
   const start = () => {
     setStarted(true);
@@ -287,9 +298,12 @@ function App() {
 
   useEffect(() => {
     if (started) {
-      const cleanup = initScene();
-      initMultiplayer();
-      return cleanup;
+      const cleanupScene = initScene();
+      const cleanupMultiplayer = initMultiplayer();
+      return () => {
+        cleanupScene?.();
+        cleanupMultiplayer?.();
+      };
     }
   }, [started, initScene, initMultiplayer]);
 

@@ -30,44 +30,52 @@ export function useMultiplayer() {
     };
 
     ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
+      try {
+        const msg = JSON.parse(event.data as string);
 
-      if (msg.type === "state") {
-        const newPlayers = new Map<string, Player>();
-        Object.values(msg.players).forEach((p: any) => newPlayers.set(p.id, p));
-        playersRef.current = newPlayers;
-        setPlayers(newPlayers);
-      }
-
-      if (msg.type === "player_joined") {
-        const updated = new Map(playersRef.current);
-        updated.set(msg.player.id, msg.player);
-        playersRef.current = updated;
-        setPlayers(updated);
-      }
-
-      if (msg.type === "player_moved") {
-        const updated = new Map(playersRef.current);
-        const p = updated.get(msg.id);
-        if (p) {
-          p.x = msg.x;
-          p.y = msg.y;
-          p.z = msg.z;
-          p.yaw = msg.yaw;
+        if (msg.type === "state") {
+          const newPlayers = new Map<string, Player>();
+          Object.values(msg.players as Record<string, Player>).forEach((p) => newPlayers.set(p.id, p));
+          playersRef.current = newPlayers;
+          setPlayers(newPlayers);
         }
-        setPlayers(new Map(updated));
-      }
 
-      if (msg.type === "player_left") {
-        const updated = new Map(playersRef.current);
-        updated.delete(msg.id);
-        playersRef.current = updated;
-        setPlayers(updated);
+        if (msg.type === "player_joined") {
+          const updated = new Map(playersRef.current);
+          updated.set(msg.player.id, msg.player);
+          playersRef.current = updated;
+          setPlayers(updated);
+        }
+
+        if (msg.type === "player_moved") {
+          const updated = new Map(playersRef.current);
+          const p = updated.get(msg.id);
+          if (p) {
+            p.x = msg.x;
+            p.y = msg.y;
+            p.z = msg.z;
+            p.yaw = msg.yaw;
+          }
+          setPlayers(new Map(updated));
+        }
+
+        if (msg.type === "player_left") {
+          const updated = new Map(playersRef.current);
+          updated.delete(msg.id);
+          playersRef.current = updated;
+          setPlayers(updated);
+        }
+      } catch (e) {
+        console.warn("[useMultiplayer] Failed to parse message:", e);
       }
     };
 
     ws.onclose = () => {
       setTimeout(connect, 2000);
+    };
+
+    ws.onerror = (e) => {
+      console.warn("[useMultiplayer] WebSocket error:", e);
     };
   }, []);
 
